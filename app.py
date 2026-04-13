@@ -2,190 +2,137 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, time
 
-st.title("Control de Turnos y Recargos")
+st.set_page_config(page_title="Control de Turnos", layout="wide")
 
-# -------------------------
-# CONFIGURACIÓN
-# -------------------------
-horas_max_semana = st.number_input("Horas máximas semanales", value=44)
+st.title("📊 Control de Turnos y Recargos")
 
-# -------------------------
-# FECHAS
-# -------------------------
+# 📅 Entradas
 fecha_inicio = st.date_input("Fecha inicio")
 fecha_fin = st.date_input("Fecha fin")
 
-# -------------------------
-# TURNO GENERAL
-# -------------------------
 turno_semana = st.selectbox("Turno de la semana", ["Mañana", "Tarde", "Noche"])
 
-# -------------------------
-# GENERAR DÍAS
-# -------------------------
-if fecha_inicio and fecha_fin:
+horas_max_semana = st.number_input("Horas máximas semanales", value=44)
 
-    dias = pd.date_range(fecha_inicio, fecha_fin)
+# 📌 Días en español
+dias_semana = {
+    "Monday": "lunes",
+    "Tuesday": "martes",
+    "Wednesday": "miércoles",
+    "Thursday": "jueves",
+    "Friday": "viernes",
+    "Saturday": "sábado",
+    "Sunday": "domingo"
+}
 
-    data = []
+# 📌 Crear rango de fechas
+fechas = pd.date_range(start=fecha_inicio, end=fecha_fin)
 
-    for dia in dias:
+df = pd.DataFrame({
+    "Fecha": fechas,
+    "Día": [dias_semana[d.strftime("%A")] for d in fechas],
+    "Tipo día": ["Normal"] * len(fechas),
+    "Hora inicio": ["06:00"] * len(fechas),
+    "Hora fin": ["14:00"] * len(fechas)
+})
 
-        nombre_dia = dia.strftime("%A").lower()
+# ✏️ Tabla editable
+df = st.data_editor(df, use_container_width=True)
 
-        # -------------------------
-        # HORARIOS SEGÚN TURNO
-        # -------------------------
+# 🕒 Función nocturna
+def es_nocturno(hora):
+    return hora >= time(19, 0) or hora < time(6, 0)
+
+# 🚀 Cálculo
+if st.button("Calcular"):
+
+    resultados = []
+
+    for i, row in df.iterrows():
+
+        tipo = row["Tipo día"]
+
+        # 🟢 Día descanso
+        if tipo == "Descanso":
+            resultados.append({
+                **row,
+                "Horas normales": 0,
+                "Horas extra": 0,
+                "Recargo nocturno": 0,
+                "Recargo dominical": 0,
+                "Recargo nocturno dominical": 0
+            })
+            continue
+
+        inicio = datetime.combine(row["Fecha"], datetime.strptime(row["Hora inicio"], "%H:%M").time())
+        fin = datetime.combine(row["Fecha"], datetime.strptime(row["Hora fin"], "%H:%M").time())
+
+        if fin <= inicio:
+            fin += timedelta(days=1)
+
+        total_horas = int((fin - inicio).total_seconds() / 3600)
+
+        dia = row["Día"].lower()
+
+        # 🟣 LÓGICA TURNOS
         if turno_semana == "Mañana":
-
-            hora_inicio = time(6, 0)
-
-            if nombre_dia in ["miércoles", "sabado", "sábado"]:
-                hora_fin = time(14, 0)
-            else:
-                hora_fin = time(13, 0)
-
-        elif turno_semana == "Tarde":
-
-            if nombre_dia == "sábado":
-                hora_inicio = time(6, 0)
-                hora_fin = time(10, 0)
-            else:
-                hora_inicio = time(13, 0)
-                hora_fin = time(21, 0)
-
-        else:  # NOCHE
-
-            if nombre_dia == "domingo":
-                hora_inicio = time(21, 0)
-            else:
-                hora_inicio = time(21, 0)
-
-            hora_fin = time(6, 0)
-
-        data.append({
-            "Fecha": dia.strftime("%d/%m/%Y"),
-            "Día": dia.strftime("%A"),
-            "Hora inicio": hora_inicio,
-            "Hora fin": hora_fin,
-            "Tipo día": "Normal"
-        })
-
-    df = pd.DataFrame(data)
-
-    st.subheader("Editar información por día")
-    df_editado = st.data_editor(df, num_rows="dynamic")
-
-    # -------------------------
-    # FUNCIONES
-    # -------------------------
-    def es_nocturno(hora):
-        return hora >= time(19, 0) or hora <= time(6, 0)
-
-    # -------------------------
-    # CALCULAR
-    # -------------------------
-    if st.button("Calcular liquidación"):
-
-        resultados = []
-
-        for _, row in df_editado.iterrows():
-
-            # DESCANSO
-            if row["Tipo día"] == "Descanso":
-                resultados.append({
-                    "Fecha": row["Fecha"],
-                    "Día": row["Día"],
-                    "Horas normales": 0,
-                    "Horas extra": 0,
-                    "Recargo nocturno": 0,
-                    "Recargo dominical": 0,
-                    "Recargo nocturno dominical": 0
-                })
-                continue
-
-            inicio = datetime.strptime(row["Fecha"], "%d/%m/%Y")
-            inicio = datetime.combine(inicio, row["Hora inicio"])
-
-            fin = datetime.strptime(row["Fecha"], "%d/%m/%Y")
-            fin = datetime.combine(fin, row["Hora fin"])
-
-            if fin < inicio:
-                fin += timedelta(days=1)
-
-            total_horas = (fin - inicio).seconds / 3600
-
-            # -------------------------
-            # TURNO NOCHE ESPECIAL
-            # -------------------------
-            horas_normales = 0
+            horas_normales = total_horas
             horas_extra = 0
 
-            if turno_semana == "Noche":
+        elif turno_semana == "Tarde":
+            horas_normales = total_horas
+            horas_extra = 0
 
-                dia_semana = row["Día"].lower()
+        elif turno_semana == "Noche":
 
-                if dia_semana == "domingo":
-                    horas_normales = 9
-                    horas_extra = max(0, total_horas - 9)
-
-                else:
-                    horas_normales = 7
-                    horas_extra = max(0, total_horas - 7)
-
+            if dia == "domingo":
+                horas_normales = 9
+                horas_extra = 0
             else:
+                horas_normales = 7
+                horas_extra = max(0, total_horas - 7)
 
-                # Almuerzo
-                if total_horas >= 12:
-                    total_horas -= 1
+        # 🟡 RECARGOS SOLO SOBRE HORAS NORMALES
+        rec_nocturno = 0
+        rec_dom = 0
+        rec_noct_dom = 0
 
-                if row["Tipo día"] == "Licencia":
-                    horas_normales = 7
-                else:
-                    if total_horas <= 8:
-                        horas_normales = total_horas
-                    else:
-                        horas_normales = 8
-                        horas_extra = total_horas - 8
+        hora_actual = inicio
+        contador = 0
 
-            # -------------------------
-            # RECARGOS
-            # -------------------------
-            rec_nocturno = 0
-            rec_dom = 0
-            rec_noct_dom = 0
+        while hora_actual < fin and contador < horas_normales:
 
-            hora_actual = inicio
+            es_domingo = dia == "domingo" or tipo == "Festivo"
+            es_noche = es_nocturno(hora_actual.time())
 
-            while hora_actual < fin:
+            if es_domingo and es_noche:
+                rec_noct_dom += 1
+            elif es_domingo:
+                rec_dom += 1
+            elif es_noche:
+                rec_nocturno += 1
 
-                if es_nocturno(hora_actual.time()):
-                    rec_nocturno += 1
+            hora_actual += timedelta(hours=1)
+            contador += 1
 
-                if row["Día"].lower() == "domingo":
-                    rec_dom += 1
+        resultados.append({
+            **row,
+            "Horas normales": horas_normales,
+            "Horas extra": horas_extra,
+            "Recargo nocturno": rec_nocturno,
+            "Recargo dominical": rec_dom,
+            "Recargo nocturno dominical": rec_noct_dom
+        })
 
-                if es_nocturno(hora_actual.time()) and row["Día"].lower() == "domingo":
-                    rec_noct_dom += 1
+    df_resultado = pd.DataFrame(resultados)
 
-                hora_actual += timedelta(hours=1)
+    st.subheader("📊 Resultado")
+    st.dataframe(df_resultado, use_container_width=True)
 
-            resultados.append({
-                "Fecha": row["Fecha"],
-                "Día": row["Día"],
-                "Tipo día": row["Tipo día"],
-                "Horas normales": horas_normales,
-                "Horas extra": horas_extra,
-                "Recargo nocturno": rec_nocturno,
-                "Recargo dominical": rec_dom,
-                "Recargo nocturno dominical": rec_noct_dom
-            })
-
-        df_final = pd.DataFrame(resultados)
-
-        st.subheader("Resultado")
-        st.dataframe(df_final)
-
-        st.subheader("Totales")
-        st.write("Horas normales:", df_final["Horas normales"].sum())
-        st.write("Horas extra:", df_final["Horas extra"].sum())
+    # 📥 Descargar
+    st.download_button(
+        "Descargar Excel",
+        df_resultado.to_csv(index=False).encode("utf-8"),
+        "turnos.csv",
+        "text/csv"
+    )
